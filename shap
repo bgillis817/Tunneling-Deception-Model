@@ -1,0 +1,157 @@
+################################################################################
+# SHAP-based Tunneling Metrics
+################################################################################
+
+library(tidyverse)
+
+
+original <- read_csv("/mnt/user-data/uploads/scores.csv", show_col_types = FALSE)
+cat("Original scores.csv columns:\n")
+print(names(original))
+cat("\n")
+
+# Load the pitcher-level SHAP scores
+pitcher_shap <- read_csv("pitcher_shap_scores.csv", show_col_types = FALSE)
+
+cat("Loaded", nrow(pitcher_shap), "pitcher-seasons from SHAP analysis\n")
+
+# Filter to pitchers only
+MIN_PITCHES <- 500
+pitcher_shap_filtered <- pitcher_shap %>%
+  filter(n_pitches >= MIN_PITCHES)
+
+cat("After filtering (>=", MIN_PITCHES, "pitches):", nrow(pitcher_shap_filtered), "pitcher-seasons\n\n")
+
+# Calculate league-wide statistics
+mean_runs_per_100 <- mean(pitcher_shap_filtered$tunneling_runs_saved_per100, na.rm = TRUE)
+sd_runs_per_100 <- sd(pitcher_shap_filtered$tunneling_runs_saved_per100, na.rm = TRUE)
+
+cat("League Statistics:\n")
+cat("  Mean runs saved per 100:", round(mean_runs_per_100, 5), "\n")
+cat("  SD runs saved per 100:", round(sd_runs_per_100, 5), "\n\n")
+
+# Generate scores.csv with EXACT column names from original
+scores <- pitcher_shap_filtered %>%
+  mutate(
+    # Calculate metrics
+    runs_saved_per_100 = tunneling_runs_saved_per100,
+    runs_saved_z_score = (runs_saved_per_100 - mean_runs_per_100) / sd_runs_per_100,
+    tunneling_plus = 100 + (runs_saved_z_score * 10),
+    runs_saved_total = total_tunneling_runs_saved,
+    expected_runs = mean_runs_per_100 * (n_pitches / 100),
+    runs_saved_above_avg = runs_saved_total - expected_runs,
+    runs_above_avg_per_100 = runs_saved_per_100 - mean_runs_per_100,
+    tunneling_WAA = runs_saved_above_avg / 10,
+    tunneling_WAA_per162 = (runs_above_avg_per_100 * 25) / 10,
+    
+    # KDE values
+    VRA_KDE = avg_VRA_KDE,
+    HRA_KDE = avg_HRA_KDE,
+    VAA_KDE = avg_VAA_KDE,
+    HAA_KDE = avg_HAA_KDE,
+    
+    # Derived KDE
+    release_similarity = (VRA_KDE + HRA_KDE) / 2,
+    approach_divergence = 1 - ((VAA_KDE + HAA_KDE) / 2),
+    tunnel_quality = (release_similarity + approach_divergence) / 2,
+    
+    # Percentiles
+    tunneling_plus_pct = percent_rank(tunneling_plus) * 100,
+    tunneling_WAA_pct = percent_rank(tunneling_WAA) * 100,
+    tunneling_WAA_per162_pct = percent_rank(tunneling_WAA_per162) * 100,
+    tunnel_quality_pct = percent_rank(tunnel_quality) * 100,
+    release_similarity_pct = percent_rank(release_similarity) * 100,
+    approach_divergence_pct = percent_rank(approach_divergence) * 100
+  ) %>%
+  # Select with EXACT column names from original
+  select(
+    player_name,
+    pitcher,
+    game_year,
+    n_pitches,
+    tunneling_plus,
+    tunneling_WAA,
+    tunneling_WAA_per162,
+    runs_saved_total,
+    runs_saved_above_avg,
+    runs_saved_per_100,
+    runs_above_avg_per_100,
+    vra_total = vra_runs_saved_total,
+    hra_total = hra_runs_saved_total,
+    vaa_total = vaa_runs_saved_total,
+    haa_total = haa_runs_saved_total,
+    vra_per_100 = vra_runs_saved_per100,
+    hra_per_100 = hra_runs_saved_per100,
+    vaa_per_100 = vaa_runs_saved_per100,
+    haa_per_100 = haa_runs_saved_per100,
+    release_sim_total = release_similarity_runs_saved_total,
+    approach_div_total = approach_divergence_runs_saved_total,
+    release_sim_per_100 = release_similarity_runs_saved_per100,
+    approach_div_per_100 = approach_divergence_runs_saved_per100,
+    VRA_KDE,
+    HRA_KDE,
+    VAA_KDE,
+    HAA_KDE,
+    release_similarity,
+    approach_divergence,
+    tunnel_quality,
+    tunneling_plus_pct,
+    tunneling_WAA_pct,
+    tunneling_WAA_per162_pct,
+    tunnel_quality_pct,
+    release_similarity_pct,
+    approach_divergence_pct
+  ) %>%
+  arrange(desc(tunneling_plus))
+
+# Verify column names match EXACTLY
+original_names <- names(original)
+generated_names <- names(scores)
+
+cat("Column Name Verification:\n")
+cat("  Original columns:", length(original_names), "\n")
+cat("  Generated columns:", length(generated_names), "\n")
+cat("  Names match:", identical(original_names, generated_names), "\n\n")
+
+if(!identical(original_names, generated_names)) {
+  cat("MISMATCH DETAILS:\n")
+  cat("Missing from generated:", setdiff(original_names, generated_names), "\n")
+  cat("Extra in generated:", setdiff(generated_names, original_names), "\n\n")
+}
+
+# Export
+output_file <- "scores_shap.csv"
+write_csv(scores, output_file)
+
+cat("SUCCESS! Generated", output_file, "\n")
+cat("  Pitcher-seasons:", nrow(scores), "\n")
+cat("  Columns:", ncol(scores), "\n\n")
+
+# Summary statistics
+cat(rep("=", 80), "\n", sep = "")
+cat("SUMMARY STATISTICS\n")
+cat(rep("=", 80), "\n\n", sep = "")
+
+cat("Tunneling+ (normalized to 100±10):\n")
+cat("  Mean:", round(mean(scores$tunneling_plus), 1), "\n")
+cat("  SD:", round(sd(scores$tunneling_plus), 1), "\n")
+cat("  Range:", round(min(scores$tunneling_plus), 1), "to", round(max(scores$tunneling_plus), 1), "\n\n")
+
+cat("tWAA (should average ~0):\n")
+cat("  Mean:", round(mean(scores$tunneling_WAA), 4), "\n")
+cat("  SD:", round(sd(scores$tunneling_WAA), 3), "\n")
+cat("  Range:", round(min(scores$tunneling_WAA), 2), "to", round(max(scores$tunneling_WAA), 2), "\n\n")
+
+# Top 10
+cat(rep("=", 80), "\n", sep = "")
+cat("TOP 10 BY TUNNELING+\n")
+cat(rep("=", 80), "\n\n", sep = "")
+
+print(scores %>%
+        select(player_name, game_year, tunneling_plus, tunneling_WAA, 
+               tunnel_quality, runs_saved_per_100) %>%
+        head(10),
+      n = 10)
+
+cat("\n", rep("=", 80), "\n", sep = "")
+cat(rep("=", 80), "\n\n", sep = "")
