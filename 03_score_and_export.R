@@ -3,15 +3,15 @@
 # SHAP-based Tunneling Metrics Pipeline
 # Adapted for flat repo structure (bgillis817/Tunneling-Deception-Model)
 #
-# Outputs go to repo root (overwrites scores.csv, etc.)
+# Outputs go to repo root — column names match existing app.R exactly
 #
 # Methodology (from capstone):
 #   1. Train XGBoost on ALL available features predicting delta_run_exp
 #   2. Extract SHAP values for every pitch
 #   3. Isolate the 4 tunneling KDE features' SHAP contributions
-#   4. Aggregate per-pitcher-season → runs saved per 100 pitches
-#   5. Standardize → Tunneling+ (100 ± 10 scale)
-#   6. Scale to wins → tWAA (cumulative) and tWAA/162 (rate)
+#   4. Aggregate per-pitcher-season -> runs saved per 100 pitches
+#   5. Standardize -> Tunneling+ (100 +/- 10 scale)
+#   6. Scale to wins -> tWAA (cumulative) and tWAA/162 (rate)
 #   7. Build sequential pitch-pair matrices from SHAP contributions
 #   8. Export CSVs to repo root for the Shiny app
 # ===========================================================================
@@ -23,11 +23,11 @@ suppressPackageStartupMessages({
 })
 
 # ---------------------------------------------------------------------------
-# CONFIG — flat structure, reads from statcast_combined/, writes to root
+# CONFIG
 # ---------------------------------------------------------------------------
 INPUT_FILE <- "statcast_combined/statcast_with_tunneling_full.rds"
 OUTPUT_DIR <- "."
-MIN_PITCHES <- 500
+MIN_PITCHES <- 48
 RUNS_PER_WIN <- 10
 
 # ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ xgb_model <- xgb.train(
 preds <- predict(xgb_model, X)
 r2 <- cor(preds, y)^2
 rmse_val <- sqrt(mean((preds - y)^2))
-cat(sprintf("  R²: %.4f | RMSE: %.4f | Features: %d\n\n", r2, rmse_val, length(valid_features)))
+cat(sprintf("  R2: %.4f | RMSE: %.4f | Features: %d\n\n", r2, rmse_val, length(valid_features)))
 
 importance <- xgb.importance(feature_names = valid_features, model = xgb_model)
 cat("Top 10 features by gain:\n")
@@ -221,15 +221,14 @@ cat(sprintf("  Range: %.1f to %.1f\n\n", min(scores$tunneling_plus), max(scores$
 # ---------------------------------------------------------------------------
 cat("Building pitch-pair sequencing matrices...\n")
 
+# Pitch-type level — column names match app.R expectations
 pitch_type_shap <- model_data %>%
   group_by(pitcher, player_name, game_year, pitch_type) %>%
   summarize(
     n = n(),
-    tunneling_r100 = -(mean(tunneling_shap_total, na.rm = TRUE) * 100),
-    vra_r100 = -(mean(shap_VRA_KDE, na.rm = TRUE) * 100),
-    hra_r100 = -(mean(shap_HRA_KDE, na.rm = TRUE) * 100),
-    vaa_r100 = -(mean(shap_VAA_KDE, na.rm = TRUE) * 100),
-    haa_r100 = -(mean(shap_HAA_KDE, na.rm = TRUE) * 100),
+    avg_tunnel_quality_for_pitch = -(mean(tunneling_shap_total, na.rm = TRUE) * 100),
+    avg_release_sim_for_pitch = -(mean(shap_VRA_KDE + shap_HRA_KDE, na.rm = TRUE) * 100),
+    avg_approach_div_for_pitch = -(mean(shap_VAA_KDE + shap_HAA_KDE, na.rm = TRUE) * 100),
     avg_VRA_KDE = mean(VRA_KDE, na.rm = TRUE),
     avg_HRA_KDE = mean(HRA_KDE, na.rm = TRUE),
     avg_VAA_KDE = mean(VAA_KDE, na.rm = TRUE),
@@ -238,6 +237,7 @@ pitch_type_shap <- model_data %>%
   ) %>%
   filter(n >= 50)
 
+# Build pitch pairs using lag()
 pairs_data <- model_data %>%
   arrange(pitcher, game_year, game_pk, at_bat_number, pitch_number) %>%
   group_by(pitcher, game_year) %>%
@@ -248,6 +248,7 @@ pairs_data <- model_data %>%
   ungroup() %>%
   filter(!is.na(prev_pitch_type))
 
+# League-wide matrix
 league_matrix <- pairs_data %>%
   group_by(prev_pitch_type, pitch_type) %>%
   summarize(
@@ -259,13 +260,17 @@ league_matrix <- pairs_data %>%
 
 cat(sprintf("  League matrix: %d pitch-pair types\n", nrow(league_matrix)))
 
+# Pitcher-specific matrices — column names match app.R expectations
+# (first_pitch, second_pitch, xrv_per_100, xrv_total)
 pitcher_matrix <- pairs_data %>%
   group_by(pitcher, player_name, game_year, prev_pitch_type, pitch_type) %>%
   summarize(
     n_pairs = n(),
-    runs_per_100 = -(mean(tunneling_shap_total, na.rm = TRUE) * 100),
+    xrv_per_100 = -(mean(tunneling_shap_total, na.rm = TRUE) * 100),
+    xrv_total = -(sum(tunneling_shap_total, na.rm = TRUE)),
     .groups = "drop"
   ) %>%
+  rename(first_pitch = prev_pitch_type, second_pitch = pitch_type) %>%
   filter(n_pairs >= 20)
 
 cat(sprintf("  Pitcher matrices: %s pair entries\n\n",
@@ -273,15 +278,27 @@ cat(sprintf("  Pitcher matrices: %s pair entries\n\n",
 
 # ---------------------------------------------------------------------------
 # STEP 8: EXPORT TO REPO ROOT
+# Column names match existing app.R exactly:
+#   scores.csv: tunnel_quality_arsenal, release_similarity_arsenal,
+#               approach_divergence_arsenal, runs_saved_per_100
+#   pitcher_pitch_pair_combos_all.csv: first_pitch, second_pitch,
+#               xrv_per_100, xrv_total
+#   pitch_type_tunneling_scores.csv: avg_tunnel_quality_for_pitch,
+#               avg_release_sim_for_pitch, avg_approach_div_for_pitch
 # ---------------------------------------------------------------------------
 cat("Exporting to repo root...\n")
 
 scores_export <- scores %>%
-  select(
+  transmute(
     player_name, pitcher, game_year, n_pitches,
     tunneling_plus, tunneling_WAA, tunneling_WAA_per162,
+    # App column names with _arsenal suffix
+    tunnel_quality_arsenal = tunnel_quality,
+    release_similarity_arsenal = release_similarity,
+    approach_divergence_arsenal = approach_divergence,
+    runs_saved_per_100 = tunneling_runs_saved_per100,
+    runs_above_avg_per_100,
     total_tunneling_runs_saved, runs_saved_above_avg,
-    tunneling_runs_saved_per100, runs_above_avg_per_100,
     vra_runs_saved_total, hra_runs_saved_total,
     vaa_runs_saved_total, haa_runs_saved_total,
     vra_runs_saved_per100, hra_runs_saved_per100,
@@ -289,12 +306,10 @@ scores_export <- scores %>%
     release_similarity_runs_saved_total, approach_divergence_runs_saved_total,
     release_similarity_runs_saved_per100, approach_divergence_runs_saved_per100,
     avg_VRA_KDE, avg_HRA_KDE, avg_VAA_KDE, avg_HAA_KDE,
-    release_similarity, approach_divergence, tunnel_quality,
     tunneling_plus_pct, tunneling_WAA_pct, tunneling_WAA_per162_pct,
     tunnel_quality_pct, release_similarity_pct, approach_divergence_pct
   )
 
-# These overwrite your existing files in root
 write_csv(scores_export, file.path(OUTPUT_DIR, "scores.csv"))
 cat("  scores.csv\n")
 
