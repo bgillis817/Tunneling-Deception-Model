@@ -235,7 +235,7 @@ pitch_type_shap <- model_data %>%
     avg_HAA_KDE = mean(HAA_KDE, na.rm = TRUE),
     .groups = "drop"
   ) %>%
-  filter(n >= 50)
+  filter(n >= 1)
 
 # Build pitch pairs using lag()
 pairs_data <- model_data %>%
@@ -256,7 +256,7 @@ league_matrix <- pairs_data %>%
     runs_per_100 = -(mean(tunneling_shap_total, na.rm = TRUE) * 100),
     .groups = "drop"
   ) %>%
-  filter(n_pairs >= 100)
+  filter(n_pairs >= 1)
 
 cat(sprintf("  League matrix: %d pitch-pair types\n", nrow(league_matrix)))
 
@@ -271,7 +271,7 @@ pitcher_matrix <- pairs_data %>%
     .groups = "drop"
   ) %>%
   rename(first_pitch = prev_pitch_type, second_pitch = pitch_type) %>%
-  filter(n_pairs >= 20)
+  filter(n_pairs >= 1)
 
 cat(sprintf("  Pitcher matrices: %s pair entries\n\n",
             format(nrow(pitcher_matrix), big.mark = ",")))

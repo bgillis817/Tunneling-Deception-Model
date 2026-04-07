@@ -1,9 +1,9 @@
-r_squared: 0.0360233024218662
-rmse: 0.221497042705401
+r_squared: 0.0359955728986621
+rmse: 0.221498371427964
 n_features: 20
 n_pitcher_seasons: 2720
 min_pitches: 48
 runs_per_win: 10
-tunneling_mean_r100: -0.00782962943845906
-tunneling_sd_r100: 0.114625784975578
-updated: 2026-04-06 12:40:41 UTC
+tunneling_mean_r100: 0.00818866264835494
+tunneling_sd_r100: 0.113503145374245
+updated: 2026-04-07 01:57:18 UTC
