@@ -186,18 +186,30 @@ cat(sprintf("  %d pitcher-seasons (>= %d pitches)\n\n", nrow(pitcher_shap), MIN_
 # ---------------------------------------------------------------------------
 # STEP 6: TUNNELING+ AND tWAA
 # ---------------------------------------------------------------------------
-mean_r100 <- mean(pitcher_shap$tunneling_runs_saved_per100, na.rm = TRUE)
-sd_r100 <- sd(pitcher_shap$tunneling_runs_saved_per100, na.rm = TRUE)
+# Calculate per-season means and SDs so each season averages exactly 100
+season_stats <- pitcher_shap %>%
+  group_by(game_year) %>%
+  summarize(
+    season_mean_r100 = mean(tunneling_runs_saved_per100, na.rm = TRUE),
+    season_sd_r100 = sd(tunneling_runs_saved_per100, na.rm = TRUE),
+    .groups = "drop"
+  )
 
-cat(sprintf("League tunneling: Mean = %.5f R/100, SD = %.5f R/100\n\n", mean_r100, sd_r100))
+cat("Per-season normalization:\n")
+for (i in seq_len(nrow(season_stats))) {
+  cat(sprintf("  %d: Mean = %.5f R/100, SD = %.5f R/100\n",
+              season_stats$game_year[i], season_stats$season_mean_r100[i], season_stats$season_sd_r100[i]))
+}
+cat("\n")
 
 scores <- pitcher_shap %>%
+  left_join(season_stats, by = "game_year") %>%
   mutate(
-    runs_saved_z_score = (tunneling_runs_saved_per100 - mean_r100) / sd_r100,
+    runs_saved_z_score = (tunneling_runs_saved_per100 - season_mean_r100) / season_sd_r100,
     tunneling_plus = 100 + (runs_saved_z_score * 10),
-    expected_runs = mean_r100 * (n_pitches / 100),
+    expected_runs = season_mean_r100 * (n_pitches / 100),
     runs_saved_above_avg = total_tunneling_runs_saved - expected_runs,
-    runs_above_avg_per_100 = tunneling_runs_saved_per100 - mean_r100,
+    runs_above_avg_per_100 = tunneling_runs_saved_per100 - season_mean_r100,
     tunneling_WAA = runs_saved_above_avg / RUNS_PER_WIN,
     tunneling_WAA_per162 = (runs_above_avg_per_100 * 25) / RUNS_PER_WIN,
     release_similarity = (avg_VRA_KDE + avg_HRA_KDE) / 2,
@@ -210,6 +222,7 @@ scores <- pitcher_shap %>%
     release_similarity_pct = percent_rank(release_similarity) * 100,
     approach_divergence_pct = percent_rank(approach_divergence) * 100
   ) %>%
+  select(-season_mean_r100, -season_sd_r100) %>%
   arrange(desc(tunneling_plus))
 
 cat("Tunneling+ distribution:\n")
@@ -332,8 +345,8 @@ metadata <- list(
   n_pitcher_seasons = nrow(scores),
   min_pitches = MIN_PITCHES,
   runs_per_win = RUNS_PER_WIN,
-  tunneling_mean_r100 = mean_r100,
-  tunneling_sd_r100 = sd_r100,
+  normalization = "per-season",
+  seasons = paste(season_stats$game_year, collapse = ", "),
   updated = format(Sys.time(), "%Y-%m-%d %H:%M:%S UTC")
 )
 writeLines(
@@ -354,7 +367,7 @@ cat("  last_updated.txt\n")
 cat(sprintf("\n=== DONE ===\n"))
 cat(sprintf("  Pitcher-seasons scored: %d\n", nrow(scores)))
 cat(sprintf("  Model R2: %.4f (full model, %d features)\n", r2, length(valid_features)))
-cat(sprintf("  Tunneling SD: %.5f runs/100 pitches\n", sd_r100))
+cat(sprintf("  Normalization: per-season (each season averages 100)\n"))
 cat(sprintf("  Tunneling+ range: %.1f to %.1f\n",
             min(scores$tunneling_plus), max(scores$tunneling_plus)))
 
