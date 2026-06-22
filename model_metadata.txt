@@ -1,9 +1,9 @@
-r_squared: 0.0361524906203059
-rmse: 0.221189855701753
+r_squared: 0.0361453570806348
+rmse: 0.221305437700445
 n_features: 20
-n_pitcher_seasons: 2969
+n_pitcher_seasons: 2979
 min_pitches: 48
 runs_per_win: 10
 normalization: per-season
 seasons: 2023, 2024, 2025, 2026
-updated: 2026-06-15 18:25:22 UTC
+updated: 2026-06-22 17:34:34 UTC
